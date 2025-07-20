@@ -1,8 +1,8 @@
-import streamlit as st import requests from bs4 import BeautifulSoup from langchain.text_splitter import CharacterTextSplitter import openai
+import streamlit as st import requests from bs4 import BeautifulSoup from langchain.text_splitter import CharacterTextSplitter import openai from langchain.chat_models import ChatOpenAI from langchain.vectorstores import FAISS from langchain.chains import RetrievalQA from langchain.document_loaders import PyPDFLoader from datetime import datetime import sqlite3 import os import tempfile
 
 커스텀 HyperCLOVA X 임베딩 래퍼 클래스
 
-def HyperclovaEmbeddings(api_key=None, model="hyperclova-x-embedding", base_url=None): class _Wrapper: def init(self, api_key, model, base_url): self.model = model openai.api_key = api_key or os.getenv("OPENAI_API_KEY") if base_url: openai.api_base = base_url.rstrip("/") def embed_documents(self, texts): resp = openai.Embedding.create( model=self.model, input=texts ) return [d.embedding for d in resp.data] return _Wrapper(api_key, model, base_url) from langchain.chat_models import ChatOpenAI from langchain.vectorstores import FAISS from langchain.chains import RetrievalQA from langchain.document_loaders import PyPDFLoader from datetime import datetime import sqlite3 import os import tempfile
+def HyperclovaEmbeddings(api_key=None, model="hyperclova-x-embedding", base_url=None): class _Wrapper: def init(self, api_key, model, base_url): self.model = model openai.api_key = api_key or os.getenv("OPENAI_API_KEY") if base_url: openai.api_base = base_url.rstrip("/") def embed_documents(self, texts): response = openai.Embedding.create( model=self.model, input=texts ) return [datum.embedding for datum in response.data] return _Wrapper(api_key, model, base_url)
 
 페이지 설정
 
@@ -14,17 +14,17 @@ api_key = st.sidebar.text_input("🔐 API 키 입력", type="password") base_url
 
 if not api_key: st.warning("API 키를 입력해주세요.") st.stop()
 
-환경변수 설정 (LangChain OpenAI wrapper 사용)
+환경변수 설정
 
 os.environ["OPENAI_API_KEY"] = api_key os.environ["OPENAI_API_BASE"] = base_url
 
-LLM 및 임베딩 초기화
+LLM 초기화
 
 llm = ChatOpenAI( model_name="hyperclova-x-large", temperature=0.7, openai_api_key=api_key, openai_api_base=base_url )
 
-임베딩 초기화: langchain-community 없이 커스텀 래퍼 사용
+임베딩 초기화
 
-embeddings = HyperclovaEmbeddings(api_key=api_key, base_url=base_url) model="hyperclova-x-embedding", openai_api_key=api_key, openai_api_base=base_url )
+embeddings = HyperclovaEmbeddings(api_key=api_key, base_url=base_url)
 
 DB 초기화 및 피드백 저장 함수
 
@@ -32,17 +32,17 @@ def init_db(): conn = sqlite3.connect("feedback.db") cur = conn.cursor() cur.exe
 
 def save_feedback(investor_type, question, answer): conn = sqlite3.connect("feedback.db") cur = conn.cursor() cur.execute(""" INSERT INTO feedback (timestamp, investor_type, question, answer) VALUES (?, ?, ?, ?) """, ( datetime.now().strftime("%Y-%m-%d %H:%M"), investor_type, question, answer )) conn.commit() conn.close()
 
-보고서 링크 및 PDF 추출
+보고서 링크 및 PDF 추출 함수
 
 def fetch_report_links(limit=5): base = "https://securities.miraeasset.com" list_url = f"{base}/bbs/board/message/list.do?categoryId=1521" headers = {"User-Agent": "Mozilla/5.0"} resp = requests.get(list_url, headers=headers) soup = BeautifulSoup(resp.text, "html.parser") links = [] for a in soup.select("div.board_list a"): title = a.text.strip() href = a.get("href") if href and "view.do" in href: links.append((title, base + href)) if len(links) >= limit: break return links
 
 def fetch_pdf_urls(report_links): base = "https://securities.miraeasset.com" headers = {"User-Agent": "Mozilla/5.0"} pdfs = [] for title, detail_url in report_links: resp = requests.get(detail_url, headers=headers) soup = BeautifulSoup(resp.text, "html.parser") a = soup.find("a", href=lambda x: x and x.endswith(".pdf")) if a: href = a["href"] pdfs.append((title, href if href.startswith("http") else base + href)) return pdfs
 
-문서 로드 및 QA 체인 구성
+QA 체인 구성 함수
 
 def build_qa_chain(): report_links = fetch_report_links() pdf_urls = fetch_pdf_urls(report_links) docs = [] for title, pdf_url in pdf_urls: try: resp = requests.get(pdf_url, headers={"User-Agent": "Mozilla/5.0"}) tmp_path = os.path.join(tempfile.gettempdir(), os.path.basename(pdf_url)) with open(tmp_path, "wb") as f: f.write(resp.content) loader = PyPDFLoader(tmp_path) docs.extend(loader.load_and_split()) except Exception as e: st.error(f"보고서 '{title}' 로딩 실패: {e}") splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=100) texts = splitter.split_documents(docs) vectordb = FAISS.from_documents(texts, embeddings) qa = RetrievalQA.from_chain_type(llm=llm, retriever=vectordb.as_retriever()) return qa
 
-실행 로직
+메인 실행 로직
 
 init_db() user_type = st.selectbox("투자 성향을 선택하세요", ["성장", "배당", "가치", "단타"]) question = st.text_input("관심 있는 질문이나 조건을 입력하세요")
 
