@@ -1,4 +1,5 @@
-import streamlit as st
+# Writing the properly formatted Streamlit app code to a file for download
+code_content = """import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from langchain.text_splitter import CharacterTextSplitter
@@ -45,24 +46,24 @@ embeddings = OpenAIEmbeddings(
 def init_db():
     conn = sqlite3.connect("feedback.db")
     cur = conn.cursor()
-    cur.execute("""
+    cur.execute(\"\"\"
         CREATE TABLE IF NOT EXISTS feedback (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT,
             investor_type TEXT,
             question TEXT,
             answer TEXT
-        )""")
+        )\"\"\")
     conn.commit()
     conn.close()
 
 def save_feedback(investor_type, question, answer):
     conn = sqlite3.connect("feedback.db")
     cur = conn.cursor()
-    cur.execute("""
+    cur.execute(\"\"\"
         INSERT INTO feedback (timestamp, investor_type, question, answer)
         VALUES (?, ?, ?, ?)
-    """, (
+    \"\"\", (
         datetime.now().strftime("%Y-%m-%d %H:%M"), investor_type, question, answer
     ))
     conn.commit()
@@ -135,3 +136,12 @@ if question:
     st.markdown("🧾 분석에 사용된 보고서 목록 및 링크:")
     for title, url in fetch_report_links():
         st.markdown(f"- [{title}]({url})")
+"""
+
+# Save the code to a .py file
+file_path = "/mnt/data/streamlit_app.py"
+with open(file_path, "w", encoding="utf-8") as f:
+    f.write(code_content)
+
+# Output the path for the user
+file_path
