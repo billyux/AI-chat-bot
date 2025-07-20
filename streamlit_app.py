@@ -1,4 +1,16 @@
-import streamlit as st import requests from bs4 import BeautifulSoup from langchain.text_splitter import CharacterTextSplitter import openai from langchain.chat_models import ChatOpenAI from langchain.vectorstores import FAISS from langchain.chains import RetrievalQA from langchain.document_loaders import PyPDFLoader from datetime import datetime import sqlite3 import os import tempfile
+import streamlit as st
+import requests from bs4
+import BeautifulSoup from langchain.text_splitter
+import CharacterTextSplitter
+import openai from langchain.chat_models
+import ChatOpenAI from langchain.vectorstores
+import FAISS from langchain.chains
+import RetrievalQA from langchain.document_loaders
+import PyPDFLoader from datetime
+import datetime
+import sqlite3
+import os
+import tempfile
 
 커스텀 HyperCLOVA X 임베딩 래퍼 클래스
 
