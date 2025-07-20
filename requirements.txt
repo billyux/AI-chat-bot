@@ -1,9 +1,9 @@
 streamlit
-langchain==0.0.330
+langchain==0.0.350
 openai
 tiktoken
-pydantic==1.10.13
 beautifulsoup4
 requests
 faiss-cpu
 pypdf
+pydantic>=2.0.0
