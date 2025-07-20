@@ -2,37 +2,46 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings import HyperClovaXEmbeddings
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.chat_models import ChatOpenAI
 from langchain.vectorstores import FAISS
 from langchain.chains import RetrievalQA
-from langchain.llms import HyperClovaX
 from langchain.document_loaders import PyPDFLoader
 from datetime import datetime
 import sqlite3
 import os
 import tempfile
 
+# 페이지 설정
 st.set_page_config(page_title="리포트 기반 종목 추천 챗봇", layout="centered")
 st.title("📊 미래에셋 리포트 기반 종목 추천 챗봇")
 
-# 사이드바에서 HyperCLOVA X API 키를 입력받습니다.
-api_key = st.sidebar.text_input("🔐 HyperCLOVA X API 키 입력", type="password")
-if api_key:
-    os.environ["HYPERCLOVA_API_KEY"] = api_key
-    # 필요에 따라 BASE URL도 설정하세요.
-    # os.environ["HYPERCLOVA_API_BASE"] = "https://api.hyperclova.naver.com"
-    llm = HyperClovaX(
-        model_name="hyperclova-x-large",
-        temperature=0.7,
-        client_kwargs={
-            "base_url": os.environ.get("HYPERCLOVA_API_BASE", "https://api.hyperclova.naver.com"),
-            "headers": {"Authorization": f"Bearer {api_key}"}
-        }
-    )
-else:
+# 사이드바에서 API 정보 입력
+api_key = st.sidebar.text_input("🔐 API 키 입력", type="password")
+base_url = st.sidebar.text_input("🌐 API Base URL", value="https://api.hyperclova.naver.com/v1")
+
+if not api_key:
     st.warning("API 키를 입력해주세요.")
     st.stop()
 
+# 환경변수 설정 (LangChain OpenAI wrapper 사용)
+os.environ["OPENAI_API_KEY"] = api_key
+os.environ["OPENAI_API_BASE"] = base_url
+
+# LLM 및 임베딩 초기화
+llm = ChatOpenAI(
+    model_name="hyperclova-x-large",
+    temperature=0.7,
+    openai_api_key=api_key,
+    openai_api_base=base_url
+)
+embeddings = OpenAIEmbeddings(
+    model="hyperclova-x-embedding",
+    openai_api_key=api_key,
+    openai_api_base=base_url
+)
+
+# DB 초기화 및 피드백 저장 함수
 def init_db():
     conn = sqlite3.connect("feedback.db")
     cur = conn.cursor()
@@ -59,6 +68,7 @@ def save_feedback(investor_type, question, answer):
     conn.commit()
     conn.close()
 
+# 보고서 링크 및 PDF 추출
 def fetch_report_links(limit=5):
     base = "https://securities.miraeasset.com"
     list_url = f"{base}/bbs/board/message/list.do?categoryId=1521"
@@ -88,7 +98,8 @@ def fetch_pdf_urls(report_links):
             pdfs.append((title, href if href.startswith("http") else base + href))
     return pdfs
 
-def load_report_documents():
+# 문서 로드 및 QA 체인 구성
+def build_qa_chain():
     report_links = fetch_report_links()
     pdf_urls = fetch_pdf_urls(report_links)
     docs = []
@@ -99,27 +110,16 @@ def load_report_documents():
             with open(tmp_path, "wb") as f:
                 f.write(resp.content)
             loader = PyPDFLoader(tmp_path)
-            docs += loader.load_and_split()
+            docs.extend(loader.load_and_split())
         except Exception as e:
             st.error(f"보고서 '{title}' 로딩 실패: {e}")
-    return docs
-
-def build_qa_chain():
-    docs = load_report_documents()
     splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=100)
     texts = splitter.split_documents(docs)
-    embeddings = HyperClovaXEmbeddings(
-        model="hyperclova-x-embedding",
-        api_key=os.environ["HYPERCLOVA_API_KEY"],
-        base_url=os.environ.get("HYPERCLOVA_API_BASE", "https://api.hyperclova.naver.com")
-    )
     vectordb = FAISS.from_documents(texts, embeddings)
-    qa = RetrievalQA.from_chain_type(
-        llm=llm,
-        retriever=vectordb.as_retriever()
-    )
+    qa = RetrievalQA.from_chain_type(llm=llm, retriever=vectordb.as_retriever())
     return qa
 
+# 실행 로직
 init_db()
 user_type = st.selectbox("투자 성향을 선택하세요", ["성장", "배당", "가치", "단타"])
 question = st.text_input("관심 있는 질문이나 조건을 입력하세요")
@@ -131,9 +131,7 @@ if question:
     st.success("📌 추천 결과")
     st.write(answer)
     save_feedback(user_type, question, answer)
-
     st.markdown("---")
     st.markdown("🧾 분석에 사용된 보고서 목록 및 링크:")
-    links = fetch_report_links()
-    for title, url in links:
+    for title, url in fetch_report_links():
         st.markdown(f"- [{title}]({url})")
