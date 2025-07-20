@@ -1,5 +1,5 @@
-# Writing the properly formatted Streamlit app code to a file for download
-code_content = """import streamlit as st
+# Writing the final cleaned Streamlit app code without any file-writing blocks
+clean_code = """import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from langchain.text_splitter import CharacterTextSplitter
@@ -138,10 +138,8 @@ if question:
         st.markdown(f"- [{title}]({url})")
 """
 
-# Save the code to a .py file
-file_path = "/mnt/data/streamlit_app.py"
+file_path = "/mnt/data/streamlit_app_clean.py"
 with open(file_path, "w", encoding="utf-8") as f:
-    f.write(code_content)
+    f.write(clean_code)
 
-# Output the path for the user
 file_path
