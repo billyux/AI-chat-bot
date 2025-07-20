@@ -1,5 +1,6 @@
 streamlit
 langchain==0.0.350
+langchain-community
 openai
 tiktoken
 beautifulsoup4
