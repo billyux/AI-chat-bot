@@ -1,5 +1,4 @@
-# Writing the final cleaned Streamlit app code without any file-writing blocks
-clean_code = """import streamlit as st
+import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from langchain.text_splitter import CharacterTextSplitter
@@ -46,24 +45,24 @@ embeddings = OpenAIEmbeddings(
 def init_db():
     conn = sqlite3.connect("feedback.db")
     cur = conn.cursor()
-    cur.execute(\"\"\"
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS feedback (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT,
             investor_type TEXT,
             question TEXT,
             answer TEXT
-        )\"\"\")
+        )""")
     conn.commit()
     conn.close()
 
 def save_feedback(investor_type, question, answer):
     conn = sqlite3.connect("feedback.db")
     cur = conn.cursor()
-    cur.execute(\"\"\"
+    cur.execute("""
         INSERT INTO feedback (timestamp, investor_type, question, answer)
         VALUES (?, ?, ?, ?)
-    \"\"\", (
+    """, (
         datetime.now().strftime("%Y-%m-%d %H:%M"), investor_type, question, answer
     ))
     conn.commit()
@@ -136,10 +135,3 @@ if question:
     st.markdown("🧾 분석에 사용된 보고서 목록 및 링크:")
     for title, url in fetch_report_links():
         st.markdown(f"- [{title}]({url})")
-"""
-
-file_path = "/mnt/data/streamlit_app_clean.py"
-with open(file_path, "w", encoding="utf-8") as f:
-    f.write(clean_code)
-
-file_path
