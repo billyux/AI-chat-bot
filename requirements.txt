@@ -1,0 +1,7 @@
+streamlit
+langchain==0.0.290
+pydantic==1.10.13
+faiss-cpu
+beautifulsoup4
+requests
+pypdf
