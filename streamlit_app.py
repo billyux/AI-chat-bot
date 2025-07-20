@@ -1,12 +1,11 @@
-
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
+from langchain.embeddings import HyperClovaXEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.chains import RetrievalQA
-from langchain.llms import OpenAI
+from langchain.llms import HyperClovaX
 from langchain.document_loaders import PyPDFLoader
 from datetime import datetime
 import sqlite3
@@ -16,10 +15,20 @@ import tempfile
 st.set_page_config(page_title="리포트 기반 종목 추천 챗봇", layout="centered")
 st.title("📊 미래에셋 리포트 기반 종목 추천 챗봇")
 
+# 사이드바에서 HyperCLOVA X API 키를 입력받습니다.
 api_key = st.sidebar.text_input("🔐 HyperCLOVA X API 키 입력", type="password")
 if api_key:
-    os.environ["OPENAI_API_KEY"] = api_key
-    llm = OpenAI(temperature=0.7)
+    os.environ["HYPERCLOVA_API_KEY"] = api_key
+    # 필요에 따라 BASE URL도 설정하세요.
+    # os.environ["HYPERCLOVA_API_BASE"] = "https://api.hyperclova.naver.com"
+    llm = HyperClovaX(
+        model_name="hyperclova-x-large",
+        temperature=0.7,
+        client_kwargs={
+            "base_url": os.environ.get("HYPERCLOVA_API_BASE", "https://api.hyperclova.naver.com"),
+            "headers": {"Authorization": f"Bearer {api_key}"}
+        }
+    )
 else:
     st.warning("API 키를 입력해주세요.")
     st.stop()
@@ -67,6 +76,7 @@ def fetch_report_links(limit=5):
     return links
 
 def fetch_pdf_urls(report_links):
+    base = "https://securities.miraeasset.com"
     headers = {"User-Agent": "Mozilla/5.0"}
     pdfs = []
     for title, detail_url in report_links:
@@ -74,7 +84,8 @@ def fetch_pdf_urls(report_links):
         soup = BeautifulSoup(resp.text, "html.parser")
         a = soup.find("a", href=lambda x: x and x.endswith(".pdf"))
         if a:
-            pdfs.append((title, a["href"] if a["href"].startswith("http") else "https://securities.miraeasset.com" + a["href"]))
+            href = a["href"]
+            pdfs.append((title, href if href.startswith("http") else base + href))
     return pdfs
 
 def load_report_documents():
@@ -97,9 +108,16 @@ def build_qa_chain():
     docs = load_report_documents()
     splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=100)
     texts = splitter.split_documents(docs)
-    embeddings = OpenAIEmbeddings()
+    embeddings = HyperClovaXEmbeddings(
+        model="hyperclova-x-embedding",
+        api_key=os.environ["HYPERCLOVA_API_KEY"],
+        base_url=os.environ.get("HYPERCLOVA_API_BASE", "https://api.hyperclova.naver.com")
+    )
     vectordb = FAISS.from_documents(texts, embeddings)
-    qa = RetrievalQA.from_chain_type(llm=llm, retriever=vectordb.as_retriever())
+    qa = RetrievalQA.from_chain_type(
+        llm=llm,
+        retriever=vectordb.as_retriever()
+    )
     return qa
 
 init_db()
