@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 from langchain.text_splitter import CharacterTextSplitter
 import openai
 import os
-from langchain.chat_models import ChatOpenAI
+from langchain.chat_models.openai import ChatOpenAI
 from langchain.vectorstores import FAISS
 from langchain.chains import RetrievalQA
 from langchain.document_loaders import PyPDFLoader
@@ -70,7 +70,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 def save_feedback(investor_type, question, answer):
     conn = sqlite3.connect("feedback.db")
     cur = conn.cursor()
@@ -105,7 +104,6 @@ def fetch_report_links(limit=5):
         if len(links) >= limit:
             break
     return links
-
 
 def fetch_pdf_urls(report_links):
     base = "https://securities.miraeasset.com"
