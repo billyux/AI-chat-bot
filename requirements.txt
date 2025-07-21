@@ -1,7 +1,6 @@
 streamlit
 langchain==0.0.350
-langchain-openai          # OpenAIEmbeddings, ChatOpenAI 모듈 제공
-langchain-community       # langchain.chat_models, langchain_community 의존성 해결
+langchain-naver
 openai
 tiktoken
 beautifulsoup4
