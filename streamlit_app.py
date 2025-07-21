@@ -1,127 +1,151 @@
 import streamlit as st
+import datetime
 import requests
 from bs4 import BeautifulSoup
-from langchain.text_splitter import CharacterTextSplitter
-from langchain_naver import ChatClovaX, ClovaXEmbeddings
+from newsapi import NewsApiClient
+from langchain.document_loaders import UnstructuredURLLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
-from langchain.chains import RetrievalQA
-from langchain.document_loaders import PyPDFLoader
-from datetime import datetime
-import sqlite3
-import os
-import tempfile
+from langchain import PromptTemplate, RetrievalQA
 
-# 페이지 설정
-st.set_page_config(page_title="리포트 기반 종목 추천 챗봇", layout="centered")
-st.title("📊 미래에셋 리포트 기반 종목 추천 챗봇")
+# --- HyperCLOVA Wrapper ---
+class HyperCLOVALLM:
+    def __init__(self, api_key_id, api_key, model="hyperclova-82b"):
+        self.headers = {
+            "Content-Type": "application/json",
+            "X-NCP-APIGW-API-KEY-ID": api_key_id,
+            "X-NCP-APIGW-API-KEY": api_key
+        }
+        self.url = "https://naveropenapi.apigw.ntruss.com/llm/v1/t2t"
+        self.model = model
 
-# 사이드바에서 API 키 입력
-api_key = st.sidebar.text_input("🔐 CLOVA API 키 입력", type="password")
-if not api_key:
-    st.warning("API 키를 입력해주세요.")
-    st.stop()
+    def generate(self, prompt, max_tokens=512, temperature=0.7):
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "maxTokens": max_tokens,
+            "temperature": temperature
+        }
+        resp = requests.post(self.url, headers=self.headers, json=payload)
+        resp.raise_for_status()
+        return resp.json()["completion"]
 
-# CLOVA Studio API 키 환경변수 설정
-os.environ["CLOVA_API_KEY"] = api_key
+    def __call__(self, prompt, **kwargs):
+        return self.generate(prompt, **kwargs)
 
-# LLM 및 임베딩 초기화
-llm = ChatClovaX(model="hyperclova-x-large")
-embeddings = ClovaXEmbeddings(model="hyperclova-x-embedding")
 
-# DB 초기화 및 피드백 저장 함수
-def init_db():
-    conn = sqlite3.connect("feedback.db")
-    cur = conn.cursor()
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS feedback (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT,
-            investor_type TEXT,
-            question TEXT,
-            answer TEXT
+# --- Resources Loader ---
+@st.cache_resource
+def load_resources(report_url):
+    loader = UnstructuredURLLoader(urls=[report_url])
+    docs = loader.load()
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    chunks = splitter.split_documents(docs)
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vectordb = FAISS.from_documents(chunks, embeddings)
+    retriever = vectordb.as_retriever(search_kwargs={"k": 5})
+    return retriever, docs
+
+
+# --- Prompt Template for Q&A ---
+question_prompt = PromptTemplate(
+    input_variables=["question", "context"],
+    template="""아래는 선택된 보고서 내용입니다:
+\"\"\"{context}\"\"\"
+
+질문: \"{question}\"
+위 정보를 바탕으로 자세히 답변하세요.
+"""
+)
+
+
+# --- Search & Recommend (NewsAPI) ---
+def search_recommendations(profile, news_api_key, top_n=3):
+    client = NewsApiClient(api_key=news_api_key)
+    articles = client.get_top_headlines(q=profile, language='ko', page_size=10)
+    titles = [a["title"] for a in articles.get("articles", [])]
+    return titles[:top_n]
+
+
+# --- Streamlit UI ---
+st.set_page_config(page_title="🤖 HyperCLOVA 투자 챗봇", layout="wide")
+st.title("🤖 HyperCLOVA 투자 챗봇 (채팅형 UI)")
+
+# --- Sidebar Settings ---
+st.sidebar.header("설정")
+api_key_id    = st.sidebar.text_input("HyperCLOVA API Key ID", type="password")
+api_key       = st.sidebar.text_input("HyperCLOVA API Key",    type="password")
+news_api_key  = st.sidebar.text_input("NewsAPI Key",           type="password")
+report_list_url = st.sidebar.text_input("보고서 목록 페이지 URL 입력")
+
+# --- Report Selection from List Page ---
+report_url = None
+if report_list_url:
+    try:
+        res  = requests.get(report_list_url)
+        soup = BeautifulSoup(res.text, "html.parser")
+        links = soup.select('a[href$=".pdf"]')
+        options = {
+            (link.get_text(strip=True) or link["href"]):
+            (link["href"] if link["href"].startswith("http")
+             else requests.compat.urljoin(report_list_url, link["href"]))
+            for link in links
+        }
+        if options:
+            selected = st.sidebar.selectbox("보고서 선택", list(options.keys()))
+            report_url = options[selected]
+            st.sidebar.markdown(f"**선택된 보고서**: [{selected}]({report_url})")
+        else:
+            st.sidebar.warning("PDF 보고서를 찾을 수 없습니다.")
+    except Exception as e:
+        st.sidebar.error(f"목록 페이지 로드 실패: {e}")
+
+# --- Initialize Resources ---
+if report_url and api_key_id and api_key:
+    retriever, docs = load_resources(report_url)
+    hc_llm = HyperCLOVALLM(api_key_id, api_key)
+else:
+    retriever = None
+    hc_llm = None
+
+# --- Chat History Init ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# --- Render Chat Messages ---
+for msg in st.session_state.messages:
+    st.chat_message(msg["role"]).write(msg["content"])
+
+# --- User Input Handling ---
+user_input = st.chat_input("질문이나 요청을 입력하세요…")
+if user_input:
+    st.session_state.messages.append({"role": "user", "content": user_input})
+
+    # 투자유형 기반 인터넷 종목 추천
+    if user_input.startswith("투자유형:") and news_api_key:
+        profile = user_input.split("투자유형:", 1)[1].strip()
+        recs = search_recommendations(profile, news_api_key)
+        rec_text = "\n".join([f"- {t}" for t in recs])
+        answer = (
+            f"**{profile} 투자유형 추천 종목 (뉴스API 기반 Top{len(recs)}):**\n{rec_text}\n\n"
+            "보고서 기반 Q&A를 원하시면 자유롭게 질문하세요!"
         )
-        """
-    )
-    conn.commit()
-    conn.close()
 
-def save_feedback(investor_type, question, answer):
-    conn = sqlite3.connect("feedback.db")
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO feedback (timestamp, investor_type, question, answer)
-        VALUES (?, ?, ?, ?)
-        """,
-        (datetime.now().strftime("%Y-%m-%d %H:%M"), investor_type, question, answer)
-    )
-    conn.commit()
-    conn.close()
+    # 보고서 기반 Q&A
+    elif retriever and hc_llm:
+        with st.spinner("응답 생성 중…"):
+            qa_chain = RetrievalQA.from_chain_type(
+                llm=hc_llm,
+                chain_type="map_reduce",
+                retriever=retriever,
+                return_source_documents=False,
+                combine_prompt=question_prompt
+            )
+            answer = qa_chain.run(question=user_input)
 
-# 보고서 링크 및 PDF 추출
-def fetch_report_links(limit=5):
-    base = "https://securities.miraeasset.com"
-    url = f"{base}/bbs/board/message/list.do?categoryId=1521"
-    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(resp.text, "html.parser")
-    links = []
-    for a in soup.select("div.board_list a"):
-        title = a.text.strip()
-        href = a.get("href")
-        if href and "view.do" in href:
-            links.append((title, base + href))
-            if len(links) >= limit:
-                break
-    return links
+    else:
+        answer = "먼저 사이드바에 보고서 목록 URL, HyperCLOVA API Key, NewsAPI Key를 모두 입력해주세요."
 
-def fetch_pdf_urls(report_links):
-    base = "https://securities.miraeasset.com"
-    pdfs = []
-    for title, detail_url in report_links:
-        resp = requests.get(detail_url, headers={"User-Agent": "Mozilla/5.0"})
-        soup = BeautifulSoup(resp.text, "html.parser")
-        a = soup.find("a", href=lambda x: x and x.endswith(".pdf"))
-        if a:
-            href = a["href"]
-            full = href if href.startswith("http") else base + href
-            pdfs.append((title, full))
-    return pdfs
-
-# QA 체인 구축
-def build_qa_chain():
-    # 보고서 로딩
-    docs = []
-    for title, pdf_url in fetch_pdf_urls(fetch_report_links()):
-        try:
-            data = requests.get(pdf_url, headers={"User-Agent": "Mozilla/5.0"}).content
-            tmp = os.path.join(tempfile.gettempdir(), os.path.basename(pdf_url))
-            with open(tmp, "wb") as f:
-                f.write(data)
-            docs.extend(PyPDFLoader(tmp).load_and_split())
-        except Exception as e:
-            st.error(f"보고서 '{title}' 로딩 실패: {e}")
-    # 텍스트 분할 & 벡터 생성
-    splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-    texts = splitter.split_documents(docs)
-    vectordb = FAISS.from_documents(texts, embeddings)
-    # RetrievalQA 체인 구성
-    return RetrievalQA.from_chain_type(llm=llm, retriever=vectordb.as_retriever())
-
-# 메인 실행
-init_db()
-user_type = st.selectbox("투자 성향을 선택하세요", ["성장", "배당", "가치", "단타"])
-question = st.text_input("관심 있는 질문이나 조건을 입력하세요")
-
-if question:
-    with st.spinner("분석 중입니다..."):
-        qa = build_qa_chain()
-        answer = qa.run(question)
-    st.success("📌 추천 결과")
-    st.write(answer)
-    save_feedback(user_type, question, answer)
-
-    st.markdown("---")
-    st.markdown("🧾 사용된 보고서:")
-    for title, url in fetch_report_links():
-        st.markdown(f"- [{title}]({url})")
+    st.session_state.messages.append({"role": "assistant", "content": answer})
+    st.experimental_rerun()
